@@ -181,7 +181,7 @@ impl<T: io::Read + io::Write> Xmodem<T> {
     /// Returns an error if reading from the inner stream fails, if the read
     /// byte was not `byte`, if the read byte was `CAN` and `byte` is not `CAN`,
     /// or if writing the `CAN` byte failed on byte mismatch.
-    impl<T: io::Read + io::Write> Xmodem<T> {
+    
     fn expect_byte_or_cancel(&mut self, byte: u8, expected: &'static str) -> io::Result<u8> {
         let received = self.read_byte(false)?;
         if received == byte {
@@ -242,49 +242,52 @@ impl<T: io::Read + io::Write> Xmodem<T> {
     /// An error of kind `UnexpectedEof` is returned if `buf.len() < 128`.
     pub fn read_packet(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if buf.len() < 128 {
-            return ioerr!(UnexpectedEof, "Buffer size too small");
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Buffer size too small"));
         }
-        if !self.started{
+        if !self.started {
             self.write_byte(NAK)?;
-            self.started=true;
-
+            self.started = true;
         }
-        
-        let start_byte = self.read_byte(true)?;
+    
+        let start_byte = self.read_byte(false)?;
         match start_byte {
+            CAN => {
+                self.write_byte(CAN)?;
+                return Err(io::Error::new(io::ErrorKind::ConnectionAborted, "Received CAN at start"));
+            }
             EOT => {
                 self.write_byte(NAK)?;
                 self.expect_byte(EOT, "Expected EOT")?;
                 self.write_byte(ACK)?;
-                self.started=false;
-
-                Ok(0)
+                self.started = false;
+                return Ok(0);
             }
             SOH => {
-                self.started=true;
-
-                let packet_num = self.read_byte(true)?;
-                let packet_num_complement = self.read_byte(true)?;
+                self.started = true;
+    
+                let packet_num = self.read_byte(false)?;
+                let packet_num_complement = self.read_byte(false)?;
                 if packet_num != 255 - packet_num_complement {
-                    return ioerr!(InvalidData, "Packet numbers do not match");
+                    return Err(io::Error::new(io::ErrorKind::InvalidData, "Packet numbers do not match"));
                 }
-
-                self.inner.read_exact(buf)?;
-                let checksum = self.read_byte(true)?;
+    
+                // Ensure full packet is read
+                self.inner.read_exact(buf).map_err(|_| io::Error::new(io::ErrorKind::UnexpectedEof, "Failed to read full packet"))?;
+    
+                let checksum = self.read_byte(false)?;
                 if get_checksum(buf) != checksum {
                     self.write_byte(NAK)?;
-                    return ioerr!(Interrupted, "Checksum mismatch");
+                    return Err(io::Error::new(io::ErrorKind::Interrupted, "Checksum mismatch"));
                 }
-
+    
                 self.write_byte(ACK)?;
                 self.packet = self.packet.wrapping_add(1);
-                Ok(128)
+                return Ok(128);
             }
-
-            _ => ioerr!(InvalidData, "Expected SOH"),
+            _ => return Err(io::Error::new(io::ErrorKind::InvalidData, "Expected SOH")),
         }
     }
-
+    
 
     /// Sends (uploads) a single packet to the inner stream using the XMODEM
     /// protocol. If `buf` is empty, end of transmissions is sent. Users of this
@@ -317,6 +320,11 @@ impl<T: io::Read + io::Write> Xmodem<T> {
     ///
     /// An error of kind `Interrupted` is returned if a packet checksum fails.
     pub fn write_packet(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if (!self.started){
+            self.expect_byte_or_cancel(NAK,"no start")?;
+            self.started=true;
+
+        }
         match buf.len() {
             0 => {
                 self.write_byte(EOT)?;
@@ -325,11 +333,7 @@ impl<T: io::Read + io::Write> Xmodem<T> {
                 self.expect_byte(ACK, "Expected ACK after final EOT")?;
                 Ok(0)
             }
-            if !self.started{
-                self.expect_byte_or_cancel(NAK,"no start")?;
-                self.started=true;
-    
-            }
+            
             
             len if len < 128 => ioerr!(UnexpectedEof, "Incomplete packet"),
             _ => {
@@ -349,7 +353,7 @@ impl<T: io::Read + io::Write> Xmodem<T> {
             }
         }
     }
-}
+
 
 
     /// Flush this output stream, ensuring that all intermediately buffered
