@@ -3,9 +3,6 @@
 #[cfg(test)]
 mod tests;
 
-#[allow(unused_imports)]
-use core::array::IntoIter;
-#[allow(unused_imports)]
 use core::convert::TryInto;
 use core::slice;
 use core::iter::IntoIterator;
