@@ -3,6 +3,7 @@ extern crate structopt;
 #[macro_use]
 extern crate structopt_derive;
 extern crate xmodem;
+
 use std::path::PathBuf;
 use std::time::Duration;
 use structopt::StructOpt;
@@ -43,12 +44,10 @@ fn progress_fn(progress: Progress) {
     println!("Progress: {:?}", progress);
 }
 
-
-fn main() {
-
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let opt = Opt::from_args();
 
-    // converting read arguments to respective objects
+    // Convert read arguments to respective objects
     let baud_rate = match opt.baud_rate.as_str() {
         "1200" => BaudRate::Baud1200,
         "2400" => BaudRate::Baud2400,
@@ -58,7 +57,7 @@ fn main() {
         "38400" => BaudRate::Baud38400,
         "57600" => BaudRate::Baud57600,
         "115200" => BaudRate::Baud115200,
-        _ => panic!("Invalid baud rate: {}", opt.baud_rate),
+        _ => return Err(format!("Invalid baud rate: {}", opt.baud_rate).into()),
     };
 
     let char_width = match opt.char_width.as_str() {
@@ -66,67 +65,67 @@ fn main() {
         "6" => CharSize::Bits6,
         "7" => CharSize::Bits7,
         "8" => CharSize::Bits8,
-        _ => panic!("Invalid character width: {}", opt.char_width),
+        _ => return Err(format!("Invalid character width: {}", opt.char_width).into()),
     };
 
     let flow_control = match opt.flow_control.as_str() {
         "none" => FlowControl::FlowNone,
         "software" => FlowControl::FlowSoftware,
         "hardware" => FlowControl::FlowHardware,
-        _ => panic!("Invalid flow control: {}", opt.flow_control),
+        _ => return Err(format!("Invalid flow control: {}", opt.flow_control).into()),
     };
 
     let stop_bits = match opt.stop_bits.as_str() {
         "1" => StopBits::Stop1,
         "2" => StopBits::Stop2,
-        _ => panic!("Invalid stop bits: {}", opt.stop_bits),
+        _ => return Err(format!("Invalid stop bits: {}", opt.stop_bits).into()),
     };
 
-    // setting up port for serial communication
-    let mut port = serial::open(&opt.tty_path).expect("Invalid path, points to invalid TTY.");
+    // Open serial port
+    let mut port = match serial::open(&opt.tty_path) {
+        Ok(port) => port,
+        Err(err) => return Err(format!("Error opening TTY device: {:?}", err).into()),
+    };
 
-    // read serial settings
-    let mut settings = port.read_settings().expect("Invalid serial device.");
-    settings.set_baud_rate(baud_rate).expect("Invalid baud rate.");
+    // Read & Apply serial settings
+    let mut settings = port.read_settings()?;
+    settings.set_baud_rate(baud_rate)?;
     settings.set_stop_bits(stop_bits);
     settings.set_flow_control(flow_control);
     settings.set_char_size(char_width);
-    // write serial settings
-    port.write_settings(&settings).expect("Invalid Settings.");
-    port.set_timeout(Duration::from_secs(opt.timeout)).expect("Invalid Timeout.");
+    port.write_settings(&settings)?;
+    port.set_timeout(Duration::from_secs(opt.timeout))?;
 
     // Raw Mode
     if opt.raw {
         match opt.input {
-            // Reading from given file
             Some(ref path) => {
-                let mut input = BufReader::new(File::open(path).expect("Invalid file path."));
-                io::copy(&mut input, &mut port).expect("Transfer failed.");
+                let file = File::open(path)
+                    .map_err(|e| format!("Error opening file {}: {}", path.display(), e))?;
+                let mut input = BufReader::new(file);
+                io::copy(&mut input, &mut port)?;
             }
-            // File not provided, read stdin()
             None => {
                 let mut input = io::stdin();
-                io::copy(&mut input, &mut port).expect("Transfer failed.");
+                io::copy(&mut input, &mut port)?;
             }
         };
-    
-    // XMODEM Mode: 
-    } else {
+    } 
+    // XMODEM Mode
+    else {
         match opt.input {
             Some(ref path) => {
-                let mut input = BufReader::new(File::open(path).expect("Invalid file path."));
-                match Xmodem::transmit_with_progress(input, &mut port, progress_fn) {
-                    Ok(_) => return,
-                    Err(err) => panic!("Error: {:?}", err),
-                }
+                let file = File::open(path)
+                    .map_err(|e| format!("Error opening file {}: {}", path.display(), e))?;
+                let mut input = BufReader::new(file);
+                Xmodem::transmit_with_progress(input, &mut port, progress_fn)?;
             }
             None => {
                 let mut input = io::stdin();
-                match Xmodem::transmit_with_progress(input, &mut port, progress_fn) {
-                    Ok(_) => return,
-                    Err(err) => panic!("Error: {:?}", err),
-                }
+                Xmodem::transmit_with_progress(input, &mut port, progress_fn)?;
             }
         }
     }
+    
+    Ok(())
 }
