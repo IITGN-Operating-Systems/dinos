@@ -1,4 +1,5 @@
 dinos
+```
 .
 |-- README.md
 |-- bin
@@ -123,3 +124,4 @@ dinos
             |-- progress.rs
             |-- read_ext.rs
             `-- tests.rs
+```
