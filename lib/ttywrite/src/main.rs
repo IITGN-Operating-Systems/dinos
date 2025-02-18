@@ -36,6 +36,7 @@ struct Opt {
     #[structopt(short = "s", long = "stop-bits", help = "Set number of stop bits", default_value = "1")]
     stop_bits: String,  
 
+
     #[structopt(short = "r", long = "raw", help = "Disable XMODEM")]
     raw: bool,
 }
@@ -128,4 +129,3 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     
     Ok(())
-}
