@@ -1,10 +1,11 @@
 #![feature(alloc_error_handler)]
 #![feature(decl_macro)]
+#![feature(asm)]
+#![feature(global_asm)]
 #![feature(auto_traits)]
-#![feature(negative_impls)]
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
-
+#![feature(negative_impls)]
 #[cfg(not(test))]
 mod init;
 
@@ -13,37 +14,14 @@ pub mod mutex;
 pub mod shell;
 
 use console::kprintln;
+use shell::shell;
 
-// FIXME: You need to add dependencies here to
-// test your drivers (Phase 2). Add them as needed.
+/// The kernel entry point.
+#[no_mangle]
+pub extern "C" fn kmain() -> ! {
+    // Print a welcome message.
+    kprintln!("Welcome to the Rust shell!");
 
-extern crate pi;  
-use pi::uart::MiniUart;
-
-
-fn test_uart() {
-    let mut uart = MiniUart::new();
-
-    kprintln!("MiniUart initialized!");
-
-    uart.write_byte(b'H');
-    uart.write_byte(b'e');
-    uart.write_byte(b'l');
-    uart.write_byte(b'l');
-    uart.write_byte(b'o');
-    uart.write_byte(b'\n');
-
-    // Echo back received characters (basic shell loop)
-    loop {
-        if uart.has_byte() {
-            let byte = uart.read_byte();
-            uart.write_byte(byte);
-        }
-    }
-}
-
-fn kmain() -> ! {
-    // FIXME: Start the shell.
-    test_uart();
-    unimplemented!()
+    // Start the shell with the prompt "> ".
+    shell("> ");
 }

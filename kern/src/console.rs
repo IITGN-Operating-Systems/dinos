@@ -42,10 +42,19 @@ impl Console {
 
 impl io::Read for Console {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        for i in 0..buf.len() {
-            buf[i] = self.read_byte();
+        if buf.is_empty() {
+            return Ok(0);
         }
-        Ok(buf.len())
+        let mut count = 0;
+        // Block until the first byte is available.
+        buf[count] = self.read_byte();
+        count += 1;
+        // Read any additional bytes that are immediately available.
+        while count < buf.len() && self.inner().has_byte() {
+            buf[count] = self.inner().read_byte();
+            count += 1;
+        }
+        Ok(count)
     }
 }
 
@@ -64,10 +73,9 @@ impl io::Write for Console {
 
 impl fmt::Write for Console {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        for byte in s.bytes() {
-            self.write_byte(byte);
-        }
-        Ok(())
+        // Delegate to the UART's fmt::Write, which takes care of inserting a
+        // carriage return before each newline.
+        self.inner().write_str(s).map_err(|_| fmt::Error)
     }
 }
 
