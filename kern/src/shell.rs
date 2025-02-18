@@ -1,6 +1,7 @@
-use core::str;
 use stack_vec::StackVec;
+
 use crate::console::{kprint, kprintln, CONSOLE};
+use core::arch::asm;
 
 /// Error type for `Command` parse failures.
 #[derive(Debug)]
@@ -15,7 +16,8 @@ struct Command<'a> {
 }
 
 impl<'a> Command<'a> {
-    /// Parse a command from a string `s` using `buf` as storage for the arguments.
+    /// Parse a command from a string `s` using `buf` as storage for the
+    /// arguments.
     ///
     /// # Errors
     ///
@@ -36,74 +38,99 @@ impl<'a> Command<'a> {
 
     /// Returns this command's path. This is equivalent to the first argument.
     fn path(&self) -> &str {
-        // We assume that the command is non-empty (see `parse`).
         self.args[0]
     }
 }
 
 /// Starts a shell using `prefix` as the prefix for each line. This function
 /// returns if the `exit` command is called.
-pub fn shell(prefix: &str) -> ! {
-    // A fixed-size buffer for input (adjust the size as needed).
-    let mut input_buffer = [0u8; 128];
+pub fn shell(prefix: &str) -> !{
+    // A 512-byte buffer for command input.
+    let mut line: [u8; 512] = [0; 512];
 
     loop {
-        {
-            // Print the prompt.
-            kprint!("{}", prefix);
-            kprint!("> ");
-        }
+        // Print the prompt.
+        kprint!("{}", prefix);
+        let mut pos = 0;
 
-        // Read a line into `input_buffer`.
-        let mut i = 0;
-        {
-            // Lock the console for reading input.
-            let mut console = CONSOLE.lock();
-            loop {
-                let byte = console.read_byte();
-                // Echo the received byte.
-                console.write_byte(byte);
-                if byte == b'\r' || byte == b'\n' {
+        // Read input one byte at a time.
+        loop {
+            let byte = CONSOLE.lock().read_byte();
+            match byte {
+                // Accept both '\r' and '\n' as Enter.
+                b'\r' | b'\n' => {
+                    kprint!("\r\n");
                     break;
                 }
-                if i < input_buffer.len() - 1 {
-                    input_buffer[i] = byte;
-                    i += 1;
+                // Handle backspace (8) and delete (127).
+                8 | 127 => {
+                    if pos > 0 {
+                        pos -= 1;
+                        // Erase the last character on the terminal.
+                        kprint!("\x08 \x08");
+                    } else {
+                        // Cannot erase past the prompt.
+                        kprint!("\x07");
+                    }
                 }
-            }
-        }
-        // Convert the bytes read into a &str.
-        let input_line = match str::from_utf8(&input_buffer[..i]) {
-            Ok(s) => s,
-            Err(_) => {
-                kprintln!("\nError: invalid UTF-8");
-                continue;
-            }
-        };
-
-        // Prepare a buffer for splitting the input into arguments.
-        let mut args_storage: [&str; 8] = [""; 8];
-        match Command::parse(input_line, &mut args_storage) {
-            Ok(cmd) => {
-                if cmd.path() == "exit" {
-                    break;
-                } else {
-                    // For demonstration, just print the command path and arguments.
-                    kprintln!("\nCommand: {}", cmd.path());
-                    for (idx, arg) in cmd.args.iter().enumerate() {
-                        kprintln!("Arg {}: {}", idx, arg);
+                // Ring the bell for other non-visible characters.
+                b if b < 32 => {
+                    kprint!("\x07");
+                }
+                // Normal character.
+                _ => {
+                    if pos < line.len() {
+                        line[pos] = byte;
+                        pos += 1;
+                        // Echo the character.
+                        kprint!("{}", byte as char);
+                    } else {
+                        // Command is too long.
+                        kprint!("\x07");
                     }
                 }
             }
-            Err(Error::Empty) => {
-                // Do nothing for an empty command.
-            }
+        }
+
+        // Convert the input to a UTF-8 string.
+        let input = core::str::from_utf8(&line[..pos]).unwrap_or("");
+
+        // If the input is empty, show a new prompt.
+        if input.is_empty() {
+            continue;
+        }
+
+        // Create a buffer for at most 64 arguments.
+        let mut args_buf: [&str; 64] = [""; 64];
+        match Command::parse(input, &mut args_buf) {
+            Err(Error::Empty) => continue,
             Err(Error::TooManyArgs) => {
-                kprintln!("\nError: too many arguments");
+                kprintln!("error: too many arguments");
+                continue;
+            }
+            Ok(cmd) => {
+                let cmd_name = cmd.path();
+                if cmd_name == "echo" {
+                    // Built-in echo: print all arguments after "echo".
+                    let mut first = true;
+                    for arg in cmd.args.iter().skip(1) {
+                        if !first {
+                            kprint!(" ");
+                        }
+                        first = false;
+                        kprint!("{}", arg);
+                    }
+                    kprintln!("");
+                } else if cmd_name == "exit" {
+                    // Built-in exit: leave the shell.
+                    kprintln!("exited.");
+                    break;
+                } else {
+                    // Unknown command.
+                    kprintln!("unknown command: {}", cmd_name);
+                }
             }
         }
     }
-
-    // After the exit command, halt by looping indefinitely.
-    loop {}
+    loop{};
 }
